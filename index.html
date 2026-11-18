@@ -221,7 +221,7 @@ function analyze(now){
   // line pixels = white pixels that are not part of a round blob
   morph(E,T,false);morph(T,E,false);morph(E,T,false);
   const pts=[];for(let k=0;k<N;k++)if(M[k]&&!T[k])pts.push(k%W+.5,((k/W)|0)+.5);
-  const segs=cue?hough(pts):[];window.__dbg={cue,R,np:pts.length/2,segs,mCount:M.reduce((a,b)=>a+b,0)};
+  const segs=cue?hough(pts):[];
   const found=interpret(segs);
   if(found){lastShotSeen=now;shot=smooth(shot,found);}else if(now-lastShotSeen>450)shot=null;
 }
