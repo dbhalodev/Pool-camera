@@ -63,7 +63,7 @@ const $=id=>document.getElementById(id);
 const view=$('view'),ctx=view.getContext('2d'),vid=$('vid'),statusEl=$('status');
 const det=document.createElement('canvas'),detx=det.getContext('2d',{willReadFrequently:true});
 const proc=document.createElement('canvas'),procx=proc.getContext('2d',{willReadFrequently:true});
-const RG=new Uint8Array(N),SX=new Uint8Array(N),bri=new Uint8Array(N),sat=new Uint8Array(N),M=new Uint8Array(N),E=new Uint8Array(N),T=new Uint8Array(N),lab=new Int32Array(N),stk=new Int32Array(N),integ=new Float64Array((W+1)*(H+1));
+const LB=new Float32Array(N),LS=new Float32Array(N),integS=new Float64Array((W+1)*(H+1)),RG=new Uint8Array(N),SX=new Uint8Array(N),bri=new Uint8Array(N),sat=new Uint8Array(N),M=new Uint8Array(N),E=new Uint8Array(N),T=new Uint8Array(N),lab=new Int32Array(N),stk=new Int32Array(N),integ=new Float64Array((W+1)*(H+1));
 
 let src=null,srcW=0,srcH=0,stream=null;
 let corners=null,cand=null,candHits=0,lastTableSeen=0,Hr2v=null;
@@ -194,11 +194,15 @@ function analyze(now){
     const k=y*W+x,mx=Math.max(r,g,b),mn=Math.min(r,g,b);bri[k]=(r+g+b)/3;sat[k]=mx-mn;}
   // white things that stand out from the felt around them (ignores broad screen glare)
   const samp=(rx,ry)=>{const w=h[6]*rx+h[7]*ry+h[8],fx=Math.round(((h[0]*rx+h[1]*ry+h[2])/w-bx)*sc),fy=Math.round(((h[3]*rx+h[4]*ry+h[5])/w-by)*sc);if(fx<0||fy<0||fx>=pw||fy>=ph)return -1;const i=(fy*pw+fx)*4;return Math.max(d[i],d[i+1],d[i+2]);};
-  if((anaN++)%5===0)measurePockets(samp);
+  const sampM=(rx,ry)=>{const w=h[6]*rx+h[7]*ry+h[8],fx=Math.round(((h[0]*rx+h[1]*ry+h[2])/w-bx)*sc),fy=Math.round(((h[3]*rx+h[4]*ry+h[5])/w-by)*sc);if(fx<0||fy<0||fx>=pw||fy>=ph)return -1;const i=(fy*pw+fx)*4;return (d[i]+d[i+1]+d[i+2])/3;};
+  if((anaN++)%5===0)measurePockets(sampM);
   const hist=new Uint32Array(256);for(let k=0;k<N;k+=3)hist[bri[k]]++;let fm=0;var acc=0;for(;fm<256;fm++){acc+=hist[fm];if(acc>=N/6)break;}
   const clip=fm*0.85; // dark pockets/balls don't drag the local average down
   for(let y=0;y<H;y++){let row=0;for(let x=0;x<W;x++){row+=Math.max(bri[y*W+x],clip);integ[(y+1)*(W+1)+x+1]=integ[y*(W+1)+x+1]+row;}}
   const rr=11,pz=0.085*H;
+  for(let y=0;y<H;y++){let row=0;for(let x=0;x<W;x++){row+=sat[y*W+x];integS[(y+1)*(W+1)+x+1]=integS[y*(W+1)+x+1]+row;}}
+  {const r2=9;for(let y=0;y<H;y++)for(let x=0;x<W;x++){const xa=Math.max(0,x-r2),xb=Math.min(W,x+r2+1),ya=Math.max(0,y-r2),yb=Math.min(H,y+r2+1),ar=(xb-xa)*(yb-ya),k=y*W+x;
+    LB[k]=(integ[yb*(W+1)+xb]-integ[ya*(W+1)+xb]-integ[yb*(W+1)+xa]+integ[ya*(W+1)+xa])/ar;LS[k]=(integS[yb*(W+1)+xb]-integS[ya*(W+1)+xb]-integS[yb*(W+1)+xa]+integS[ya*(W+1)+xa])/ar;}}
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){const k=y*W+x;
     if(x<3||y<3||x>=W-3||y>=H-3){M[k]=0;continue;}
     let nearP=false;for(const q of PZONES)if(Math.abs(x-q[0])<pz&&Math.abs(y-q[1])<pz){nearP=true;break;}if(nearP){M[k]=0;continue;}
@@ -263,13 +267,19 @@ function analyze(now){
         for(let q=-0.5;q<=0.51;q+=0.25){const cx=px-uy*q*R,cy=py+ux*q*R;const sc=disc(cx,cy)/60+1.5*behind+1.5*line-2*aheadM;
           if(sc>bb){bb=sc;cb={x:cx,y:cy};sideA=sgn>0;}}}}
     const dir=sideA?{x:ux,y:uy}:{x:-ux,y:-uy};
+    // snap the cue ball onto the bright stretch along the line that has the dark stick right behind it
+    if(cb){const tc=(cb.x-stick.a.x)*ux+(cb.y-stick.a.y)*uy,sg=sideA?1:-1;
+      const prof=(t,useMin)=>{let v=useMin?255:0,n=0;for(let q=-1;q<=1;q++){const xi=Math.round(stick.a.x+ux*t-uy*q),yi=Math.round(stick.a.y+uy*t+ux*q);if(xi<0||yi<0||xi>=W||yi>=H)continue;const b=bri[yi*W+xi];if(useMin)v=Math.min(v,b);else v+=b;n++;}return n?(useMin?v:v/n)-fm:0;};
+      const meanP=(t0,t1,useMin)=>{let s=0,n=0;const st=t1>t0?1:-1;for(let t=t0;st>0?t<=t1:t>=t1;t+=st){s+=prof(t,useMin);n++;}return n?s/n:0;};
+      let bestT=null,bv=-1e9;for(let t=tc-4*R;t<=tc+5*R;t+=0.5){const face=meanP(t-0.6*R,t+0.6*R,false),back=meanP(t-sg*1.4*R,t-sg*4*R,true);if(back>-15)continue;const v=face-0.3*back;if(v>bv){bv=v;bestT=t;}}
+      if(bestT!==null&&bv>5)cb={x:stick.a.x+ux*bestT,y:stick.a.y+uy*bestT};}
     const c0=cb||{x:stick.b.x,y:stick.b.y};
     // precise aim: sweep for the game's thin aim line starting at the cue ball
     const rf=refineAim(c0,dir);
     const cueP=rf?rf.cue:c0,fdir=rf?rf.dir:dir;cue=cueP;
     const balls=findBalls(cueP,sm,fm);
     found=cb?{cue:cueP,dir:fdir,ghost:null,obj:null,after:null,balls,precise:!!rf}:null;
-    if(rf&&found){const ob=findObject(cueP,fdir,rf.end,balls,sm,fm);if(ob){found.ghost=ob.G;found.obj={start:ob.O,dir:ob.u};found.fm=fm;}}
+    if(rf&&found){const ob=findGhostHit(cueP,fdir,sm,fm);if(ob){found.ghost=ob.G;found.obj={start:ob.O,dir:ob.u};found.fm=fm;}}
   }else{
     // no stick visible: fall back to the white guide line from the cue ball
     let best=null;for(const w of wb){let sc=w.n;if(cue&&len(w.x-cue.x,w.y-cue.y)<2*R)sc*=2.5;if(!best||sc>best.sc){best={x:w.x,y:w.y,n:w.n,sc};}}
@@ -286,7 +296,7 @@ function rgAt(x,y,px,py){let m=0;for(let s=-0.7;s<=0.71;s+=0.7){const xx=Math.ro
 function rayFrac(ox,oy,ux,uy,t0,t1){let n=0,h=0;for(let t=t0;t<=t1;t+=1){const x=ox+ux*t,y=oy+uy*t;if(x<3||y<3||x>W-4||y>H-4)break;n++;if(rgAt(x,y,-uy,ux)>=RTH)h++;}return n>=10?h/n:0;}
 function rayRun(ox,oy,ux,uy,t0,t1){let h=0,gap=0;for(let t=t0;t<=t1;t+=1){const x=ox+ux*t,y=oy+uy*t;if(x<3||y<3||x>W-4||y>H-4)break;const xi=Math.round(x),yi=Math.round(y),v=RG[yi*W+xi];if(rgAt(x,y,-uy,ux)>=RTH){h+=1+Math.min(v,40)/40;gap=0;}else if(++gap>5)break;}return h;}
 // least-squares fit of the game's line pixels near a ray → sub-degree direction
-function lastHit(ox,oy,ux,uy,t0,t1){let last=t0,gap=0;for(let t=t0;t<=t1;t+=1){const x=ox+ux*t,y=oy+uy*t;if(x<3||y<3||x>W-4||y>H-4)break;if(rgAt(x,y,-uy,ux)>=RTH){last=t;gap=0;}else if(++gap>5)break;}return last;}
+function lastHit(ox,oy,ux,uy,t0,t1,maxGap){maxGap=maxGap||5;let last=t0,gap=0;for(let t=t0;t<=t1;t+=1){const x=ox+ux*t,y=oy+uy*t;if(x<3||y<3||x>W-4||y>H-4)break;if(rgAt(x,y,-uy,ux)>=RTH){last=t;gap=0;}else if(++gap>maxGap)break;}return last;}
 function fitRidge(ox,oy,ux,uy,t0,t1){let sw=0,mx=0,my=0;const P=[],seen=new Set();
   for(let t=t0;t<=t1;t+=0.5)for(let q=-1.5;q<=1.51;q+=0.5){const xi=Math.round(ox+ux*t-uy*q),yi=Math.round(oy+uy*t+ux*q);if(xi<0||yi<0||xi>=W||yi>=H)continue;const k=yi*W+xi;if(seen.has(k))continue;seen.add(k);const v=RG[k];if(v<RTH)continue;P.push([xi+.5,yi+.5,v]);sw+=v;mx+=(xi+.5)*v;my+=(yi+.5)*v;}
   if(P.length<6)return null;mx/=sw;my/=sw;let xx=0,yy=0,xy=0;for(const p of P){const a=p[0]-mx,b=p[1]-my;xx+=a*a*p[2];yy+=b*b*p[2];xy+=a*b*p[2];}
@@ -302,13 +312,13 @@ function refineAim(c,dir){const a0=Math.atan2(dir.y,dir.x);let best=null;
   let fb=null;for(let da=-0.8;da<=0.81;da+=0.1)for(let off=bo-0.4;off<=bo+0.41;off+=0.1){const a=ba+da*Math.PI/180,ux=Math.cos(a),uy=Math.sin(a),ox=c.x-uy*off*R,oy=c.y+ux*off*R,h=rayRun(ox,oy,ux,uy,1.4*R,400)-Math.abs(off-bo)*2;
     if(!fb||h>fb.h)fb={h,ux,uy,ox,oy};}
   best={...best,...fb};
-  {const end=lastHit(best.ox,best.oy,best.ux,best.uy,1.4*R,500),L=fitRidge(best.ox,best.oy,best.ux,best.uy,1.4*R,end);
+  {const end=lastHit(best.ox,best.oy,best.ux,best.uy,1.4*R,500,4*R),L=fitRidge(best.ox,best.oy,best.ux,best.uy,1.4*R,end);
     if(L){const cp=proj(c,L);best.ox=cp.x;best.oy=cp.y;best.ux=L.dx;best.uy=L.dy;}}
   // follow the line to where it stops (the contact point / cushion)
   let last=1.4*R,gap=0;for(let t=1.4*R;t<700;t+=1){const x=best.ox+best.ux*t,y=best.oy+best.uy*t;if(x<3||y<3||x>W-4||y>H-4)break;
-    if(rgAt(x,y,-best.uy,best.ux)>=RTH){last=t;gap=0;}else if(++gap>7)break;}
+    if(rgAt(x,y,-best.uy,best.ux)>=RTH){last=t;gap=0;}else if(++gap>4*R)break;}
   return{cue:{x:best.ox,y:best.oy},dir:{x:best.ux,y:best.uy},end:{x:best.ox+best.ux*last,y:best.oy+best.uy*last}};}
-function ballness(O,sm,fm){let n=0,h=0;const r=0.75*R;for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){if(dx*dx+dy*dy>r*r)continue;const x=Math.round(O.x+dx),y=Math.round(O.y+dy);if(x<0||y<0||x>=W||y>=H)continue;n++;const k=y*W+x;if(bri[k]<fm-30||sat[k]>sm+30)h++;}return n?h/n:0;} // coloured or dark = a ball; white guide lines don't count
+function ballness(O,sm,fm){let n=0,h=0;const r=0.75*R;for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){if(dx*dx+dy*dy>r*r)continue;const x=Math.round(O.x+dx),y=Math.round(O.y+dy);if(x<0||y<0||x>=W||y>=H)continue;n++;const k=y*W+x;if(ballPix(k,sm,fm))h++;}return n?h/n:0;} // coloured or dark = a ball; white guide lines don't count
 // the hit ball's short line: its centre sits 2 ball-widths beyond the contact point, the line runs away from it
 function findObject(c,dir,end,balls,sm,fm){
   const a0=Math.atan2(dir.y,dir.x);let best=null;
@@ -330,6 +340,59 @@ function findObject(c,dir,end,balls,sm,fm){
     const end=lastHit(fb.O.x,fb.O.y,fb.u.x,fb.u.y,1.1*R,300),L=fitRidge(fb.O.x,fb.O.y,fb.u.x,fb.u.y,1.1*R,end);
     if(L){const ref=best.Ofix||b0.O;best={...best,O:proj(ref,L),u:{x:L.dx,y:L.dy}};}else best={...best,O:fb.O,u:fb.u};}
   const G={x:best.O.x-best.u.x*2*R,y:best.O.y-best.u.y*2*R};return{G,O:best.O,u:best.u};}
+// The game draws a white ghost ring where the cue ball will touch the hit ball. Find that ring on the aim line,
+// then the solid ball touching it: the hit ball travels from the ghost's centre through that ball's centre.
+function ringScore(cx,cy,rad){rad=rad||R;let on=0,n=0,inn=0,ni=0;for(let i=0;i<32;i++){const a=i/32*Math.PI*2;let m=0;for(const rr of [0.88*rad,rad,1.12*rad]){const x=Math.round(cx+Math.cos(a)*rr),y=Math.round(cy+Math.sin(a)*rr);if(x<0||y<0||x>=W||y>=H)continue;m=Math.max(m,RG[y*W+x]);}n++;if(m>=RTH)on++;}
+  for(let dy=-0.45*rad;dy<=0.45*rad;dy++)for(let dx=-0.45*rad;dx<=0.45*rad;dx++){const x=Math.round(cx+dx),y=Math.round(cy+dy);if(x<0||y<0||x>=W||y>=H)continue;ni++;if(RG[y*W+x]>=RTH)inn++;}
+  return n?on/n-0.5*(ni?inn/ni:0):0;}
+function ballAround(G,a0,sm,fm){let ob=null;
+  for(let da=-85;da<=85;da+=1){const a=a0+da*Math.PI/180;for(const k of [1.85,2,2.15]){const O={x:G.x+Math.cos(a)*k*R,y:G.y+Math.sin(a)*k*R};const bn=ballness(O,sm,fm);if(!ob||bn>ob.bn)ob={bn,a};}}
+  if(!ob)return null;let sa=0,sw=0;for(let da=-85;da<=85;da+=1){const a=a0+da*Math.PI/180,bn=ballness({x:G.x+Math.cos(a)*2*R,y:G.y+Math.sin(a)*2*R},sm,fm);if(bn>=ob.bn-0.12){sa+=(a-ob.a)*bn;sw+=bn;}}
+  return{bn:ob.bn,a:ob.a+(sw?sa/sw:0)};}
+function findGhostHit(c,dir,sm,fm){
+  // every ring along the aim line is a candidate; the real ghost is the one with a solid ball touching it
+  const a0=Math.atan2(dir.y,dir.x),cands=[];
+  // the ghost ring is exactly one ball in size → also measures the ball size on screen
+  const radii=[0.9,1,1.1].map(k=>k*R); // 8 Ball Pool: ball size is a fixed fraction of the (straightened) table
+  for(let al=2.5*R;al<600;al+=1){const x=c.x+dir.x*al,y=c.y+dir.y*al;if(x<4||y<4||x>W-4||y>H-4)break;
+    let bq=null;for(let q=-0.5*R;q<=0.51*R;q+=0.25*R)for(const rad of radii){const cx=x-dir.y*q,cy=y+dir.x*q,v=ringScore(cx,cy,rad);if(!bq||v>bq.v)bq={v,x:cx,y:cy,al,rad};}
+    if(bq.v>0.5){const last=cands[cands.length-1];if(last&&bq.al-last.al<1.5*R){if(bq.v>last.v)cands[cands.length-1]=bq;}else cands.push(bq);}}
+  let best=null;const R0=R;
+  for(const g of cands){R=g.rad;const G={x:g.x,y:g.y},ob=ballAround(G,a0,sm,fm);R=R0;if(!ob||ob.bn<0.5)continue;const sc=g.v+ob.bn;if(!best||sc>best.sc)best={sc,G,ob,rad:g.rad};}
+  if(!best)return null;
+  const G=best.G;let u={x:Math.cos(best.ob.a),y:Math.sin(best.ob.a)};
+  const rB=best.rad,O={x:G.x+u.x*2*rB,y:G.y+u.y*2*rB};
+  // fine-tune with the game's short line from that ball (±8°)
+  const b0=Math.atan2(u.y,u.x);let fb=null;
+  for(let da=-40;da<=40.01;da+=0.5)for(let oq=-0.6;oq<=0.61;oq+=0.2){const a=b0+da*Math.PI/180,ux=Math.cos(a),uy=Math.sin(a),ox=O.x-uy*oq*R,oy=O.y+ux*oq*R;const h=rayRun(ox,oy,ux,uy,1.1*rB,300);if(!fb||h>fb.h)fb={h,ux,uy,ox,oy};}
+  if(fb&&fb.h>2.5*rB){const e=lastHit(fb.ox,fb.oy,fb.ux,fb.uy,1.1*rB,300),L=fitRidge(fb.ox,fb.oy,fb.ux,fb.uy,1.1*rB,e);const cand=L?{x:L.dx,y:L.dy}:{x:fb.ux,y:fb.uy};if(cand.x*u.x+cand.y*u.y>Math.cos(42*Math.PI/180))u=cand;}
+  return{G,O,u};}
+// The ball being hit: the most solid coloured/dark disc where the game's aim line ends.
+// Its direction then follows from geometry (contact point on the aim line, 2 ball-radii from its centre),
+// and is only fine-tuned (±8°) with the game's own short line — so the cue ball's deflection line (90° off) can never be chosen.
+function ballPix(k,sm,fm){return Math.abs(bri[k]-LB[k])>25||sat[k]>LS[k]+40;} // a ball: strong highlight/shadow or clearly coloured vs the felt around it
+function findHit(c,dir,end,sm,fm){
+  // walk along the aim ray; the first solid ball within reach of the cue ball's path is the one it hits
+  const tEnd=len(end.x-c.x,end.y-c.y);let best=null;
+  for(let al=2.8*R;al<600;al+=0.5){const px=c.x+dir.x*al,py=c.y+dir.y*al;if(px<-R||py<-R||px>W+R||py>H+R)break;
+    let rowBest=null;for(let q=-1.9*R;q<=1.9*R;q+=0.5){const O={x:px-dir.y*q,y:py+dir.x*q};if(O.x<0||O.y<0||O.x>=W||O.y>=H)continue;const bn=ballness(O,sm,fm);if(bn>=0.6&&(!rowBest||bn>rowBest.bn))rowBest={O,bn,al};}
+    if(rowBest){ // take the most solid spot within the next ball-width, then stop
+      best=rowBest;for(let a2=al;a2<al+1.5*R;a2+=0.5){const qx=c.x+dir.x*a2,qy=c.y+dir.y*a2;for(let q=-1.9*R;q<=1.9*R;q+=0.5){const O={x:qx-dir.y*q,y:qy+dir.x*q};if(O.x<0||O.y<0||O.x>=W||O.y>=H)continue;const bn=ballness(O,sm,fm);if(bn>best.bn)best={O,bn,al:a2};}}
+      // a "ball" far beyond where the game's aim line stops is suspicious; a real hit is near the line end
+      if(tEnd>4*R&&best.al>tEnd+5*R)best=null;
+      break;}}
+  if(!best)return null;
+  // centre the ball: centroid of ball pixels around it (twice)
+  let O=best.O;for(let it=0;it<2;it++){let sx=0,sy=0,n=0;const r=1.25*R;for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){if(dx*dx+dy*dy>r*r)continue;const x=Math.round(O.x+dx),y=Math.round(O.y+dy);if(x<0||y<0||x>=W||y>=H)continue;if(ballPix(y*W+x,sm,fm)){sx+=x+.5;sy+=y+.5;n++;}}if(n>5)O={x:sx/n,y:sy/n};}
+  const vx=O.x-c.x,vy=O.y-c.y,al=vx*dir.x+vy*dir.y,pq=-vx*dir.y+vy*dir.x;if(Math.abs(pq)>=2*R)return null;
+  const G={x:c.x+dir.x*(al-Math.sqrt(4*R*R-pq*pq)),y:c.y+dir.y*(al-Math.sqrt(4*R*R-pq*pq))};
+  let u=norm({x:O.x-G.x,y:O.y-G.y});
+  // fine-tune with the game's short line from that ball (only within ±8° of the geometric direction)
+  const a0=Math.atan2(u.y,u.x);let fb=null;
+  for(let da=-8;da<=8.01;da+=0.25)for(let oq=-0.4;oq<=0.41;oq+=0.2){const a=a0+da*Math.PI/180,ux=Math.cos(a),uy=Math.sin(a),ox=O.x-uy*oq*R,oy=O.y+ux*oq*R;const h=rayRun(ox,oy,ux,uy,1.1*R,300);if(!fb||h>fb.h)fb={h,ux,uy,ox,oy};}
+  if(fb&&fb.h>2.5*R){const e=lastHit(fb.ox,fb.oy,fb.ux,fb.uy,1.1*R,300),L=fitRidge(fb.ox,fb.oy,fb.ux,fb.uy,1.1*R,e);
+    const cand=L?{x:L.dx,y:L.dy}:{x:fb.ux,y:fb.uy};if(cand.x*u.x+cand.y*u.y>Math.cos(8*Math.PI/180))u=cand;}
+  return{G,O,u};}
 // object balls: solid round blobs that are clearly coloured, dark or white
 function findBalls(c0,sm,fm){
   for(let k=0;k<N;k++)T[k]=SX[k]|M[k];morph(T,E,false);morph(E,T,true);morph(T,E,true);
@@ -398,7 +461,9 @@ function smooth(prev,cur){
   if(prev.dir.x*cur.dir.x+prev.dir.y*cur.dir.y<0.97||len(prev.cue.x-cur.cue.x,prev.cue.y-cur.cue.y)>R){if(cur.obj)cur.objT=performance.now();return cur;}
   const o={cue:mix(prev.cue,cur.cue,.5),dir:norm(mix(prev.dir,cur.dir,.45)),ghost:cur.ghost&&prev.ghost?mix(prev.ghost,cur.ghost,.5):cur.ghost,obj:cur.obj,after:cur.after,balls:cur.balls,wsegs:cur.wsegs};
   const now=performance.now();
-  if(cur.obj&&prev.obj&&prev.obj.dir.x*cur.obj.dir.x+prev.obj.dir.y*cur.obj.dir.y>0.95)o.obj={start:mix(prev.obj.start,cur.obj.start,.35),dir:norm(mix(prev.obj.dir,cur.obj.dir,.3))};
+  if(cur.obj&&prev.obj){const sim=prev.obj.dir.x*cur.obj.dir.x+prev.obj.dir.y*cur.obj.dir.y;
+    if(sim>0.985){o.obj={start:mix(prev.obj.start,cur.obj.start,.35),dir:norm(mix(prev.obj.dir,cur.obj.dir,.3))};o.pend=0;}
+    else{o.pend=(prev.pend||0)+1;if(o.pend<3){o.obj=prev.obj;o.ghost=prev.ghost;}else o.pend=0;}} // needs 3 frames in a row to switch
   if(cur.obj)o.objT=now;
   else if(prev.obj&&now-(prev.objT||0)<900){o.obj=prev.obj;o.ghost=prev.ghost;o.objT=prev.objT;} // hold through brief dropouts
   return o;}
@@ -409,18 +474,33 @@ const PZONES=[[0,0],[W/2,0],[W,0],[0,H],[W/2,H],[W,H]];
 let PK=null,anaN=0,feltMed=200;
 const pocketDefaults=()=>[[-1.8*R,-1.5*R],[W/2,-2.7*R],[W+1.8*R,-1.5*R],[-1.8*R,H+1.5*R],[W/2,H+2.7*R],[W+1.8*R,H+1.5*R]];
 function measurePockets(samp){
-  // felt brightness (max channel) to judge "dark"
-  let fv=[];for(let i=0;i<40;i++){const v=samp(W*(0.2+0.6*Math.random()),H*(0.2+0.6*Math.random()));if(v>=0)fv.push(v);}fv.sort((a,b)=>a-b);if(fv.length)feltMed=fv[fv.length>>1];
-  const def=pocketDefaults(),out=[];
-  for(let i=0;i<6;i++){const c=def[i];let sx=0,sy=0,n=0;const r=4*R;
-    for(let y=c[1]-r;y<=c[1]+r;y+=0.75)for(let x=c[0]-r;x<=c[0]+r;x+=0.75){if(x>R&&x<W-R&&y>R&&y<H-R)continue;const v=samp(x,y);if(v>=0&&v<feltMed*0.42){sx+=x;sy+=y;n++;}}
-    const area=n*0.5625;out.push(area>0.8*Math.PI*R*R&&area<6*Math.PI*R*R?[sx/n,sy/n]:null);}
-  if(!PK)PK=def.map(p=>p.slice());
-  for(let i=0;i<6;i++){if(out[i])PK[i]=[PK[i][0]*0.6+out[i][0]*0.4,PK[i][1]*0.6+out[i][1]*0.4];}
+  let fv=[];for(let i=0;i<60;i++){const v=samp(W*(0.15+0.7*Math.random()),H*(0.15+0.7*Math.random()));if(v>=0)fv.push(v);}fv.sort((a,b)=>a-b);if(fv.length)feltMed=fv[fv.length>>1];
+  const def=pocketDefaults(),m=[];
+  for(let i=0;i<6;i++){const c=def[i],r=3.5*R,dr=1.0*R;
+    // sample the window once, then find the centre of the darkest disc (= the pocket hole)
+    const g=[],x0=Math.floor(c[0]-r-dr),y0=Math.floor(c[1]-r-dr),n=Math.ceil(2*(r+dr))+1;
+    for(let j=0;j<n;j++){const row=[];for(let k=0;k<n;k++)row.push(samp(x0+k,y0+j));g.push(row);}
+    let best=null;
+    for(let cy=dr;cy<n-dr;cy++)for(let cx=dr;cx<n-dr;cx++){const px=x0+cx,py=y0+cy;
+      if(i===1||i===4){if(i===1?py>-0.3*R:py<H+0.3*R)continue;}else{const ox=i===0||i===3?-px:px-W,oy=i<3?-py:py-H;if(ox<0.2*R||oy<0.2*R)continue;}
+      let s=0,cnt=0;for(let dy=-dr;dy<=dr;dy++)for(let dx=-dr;dx<=dr;dx++){if(dx*dx+dy*dy>dr*dr)continue;const v=g[Math.round(cy+dy)][Math.round(cx+dx)];if(v<0){cnt=-1e9;break;}s+=v;cnt++;}
+      if(cnt>0){const mean=s/cnt;if(!best||mean<best.v)best={v:mean,x:x0+cx,y:y0+cy};}}
+    m.push(best&&best.v<feltMed*0.55?[best.x,best.y]:null);}
+  // symmetric table: all corner pockets share one offset, both middle pockets share one
+  let ax=0,ay=0,nc=0;for(const [i,sx,sy] of [[0,-1,-1],[2,1,-1],[3,-1,1],[5,1,1]]){if(!m[i])continue;const cx=sx<0?0:W,cy=sy<0?0:H;ax+=(m[i][0]-cx)*sx;ay+=(m[i][1]-cy)*sy;nc++;}
+  let my=0,mx=0,ns=0;for(const [i,sy] of [[1,-1],[4,1]]){if(!m[i])continue;my+=(m[i][1]-(sy<0?0:H))*sy;mx+=m[i][0]-W/2;ns++;}
+  if(!PKm)PKm={ax:1.8*R,ay:1.5*R,sy:2.7*R,sx:0};
+  const k=0.25;if(nc>=2){PKm.ax+=(ax/nc-PKm.ax)*k;PKm.ay+=(ay/nc-PKm.ay)*k;}if(ns>=1){PKm.sy+=(my/ns-PKm.sy)*k;PKm.sx+=(mx/ns-PKm.sx)*k;}
+  const A=PKm.ax,B=PKm.ay,S=PKm.sy,X=W/2+PKm.sx;
+  const model=[[-A,-B],[X,-S],[W+A,-B],[-A,H+B],[X,H+S],[W+A,H+B]];
+  // each pocket follows its own measurement (smoothed); the symmetric model only fills in if one isn't visible
+  if(!PK)PK=model.map(p=>p.slice());
+  for(let i=0;i<6;i++){const tgt=m[i]&&len(m[i][0]-model[i][0],m[i][1]-model[i][1])<1.5*R?m[i]:model[i];PK[i]=[PK[i][0]+(tgt[0]-PK[i][0])*0.3,PK[i][1]+(tgt[1]-PK[i][1])*0.3];}
 }
+let PKm=null;
 // A ball only drops if it reaches the gap in the cushion at a pocket AND its path heads into the pocket's throat.
 // Middle pockets need a fairly steep angle; a ball skimming along the rail past them does not go in.
-const CJ=2.0,SJ=2.2;
+const CJ=4.0,SJ=2.2;
 function trace(p,d,maxB,maxLen){
   const pts=[{x:p.x,y:p.y}];let pos={x:Math.min(W-R,Math.max(R,p.x)),y:Math.min(H-R,Math.max(R,p.y))},dir={x:d.x,y:d.y},b=0,total=0;
   for(let g=0;g<12;g++){let tw=Infinity,ax=0,t;
@@ -432,8 +512,8 @@ function trace(p,d,maxB,maxLen){
     // which pocket gaps is this contact point in?
     const cand=[];
     if(ax===2){const top=dir.y<0;if(Math.abs(C.x-W/2)<SJ*R)cand.push([top?1:4,top?[W/2,-0.6*R]:[W/2,H+0.6*R],1.1*R]);
-      if(C.x<R+CJ*R)cand.push([top?0:3,top?[-0.35*R,-0.35*R]:[-0.35*R,H+0.35*R],1.5*R]);if(C.x>W-R-CJ*R)cand.push([top?2:5,top?[W+0.35*R,-0.35*R]:[W+0.35*R,H+0.35*R],1.5*R]);}
-    else{const left=dir.x<0;if(C.y<R+CJ*R)cand.push([left?0:2,left?[-0.35*R,-0.35*R]:[W+0.35*R,-0.35*R],1.5*R]);if(C.y>H-R-CJ*R)cand.push([left?3:5,left?[-0.35*R,H+0.35*R]:[W+0.35*R,H+0.35*R],1.5*R]);}
+      if(C.x<R+CJ*R)cand.push([top?0:3,top?[-0.35*R,-0.35*R]:[-0.35*R,H+0.35*R],1.75*R]);if(C.x>W-R-CJ*R)cand.push([top?2:5,top?[W+0.35*R,-0.35*R]:[W+0.35*R,H+0.35*R],1.75*R]);}
+    else{const left=dir.x<0;if(C.y<R+CJ*R)cand.push([left?0:2,left?[-0.35*R,-0.35*R]:[W+0.35*R,-0.35*R],1.75*R]);if(C.y>H-R-CJ*R)cand.push([left?3:5,left?[-0.35*R,H+0.35*R]:[W+0.35*R,H+0.35*R],1.75*R]);}
     for(const [pi,T,acc] of cand){const tt=Math.max(0,(T[0]-C.x)*dir.x+(T[1]-C.y)*dir.y),qx=C.x+dir.x*tt,qy=C.y+dir.y*tt;
       if(len(qx-T[0],qy-T[1])<acc){const P=(PK||pocketDefaults())[pi];pts.push(C);pts.push({x:P[0],y:P[1]});return{pts,pocket:pi};}}
     pos=C;pts.push({x:pos.x,y:pos.y});total+=tw;
