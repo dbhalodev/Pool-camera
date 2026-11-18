@@ -231,6 +231,13 @@ function analyze(now){
     if(!stick||g.len>stick.len)stick=g;}
   let found=null;
   if(stick){
+    ridge();
+    // the stick's dark pixels give a line a few px off; snap it onto the game's thin bright aim line (same line, much sharper)
+    {const L=stick.len,mx=(stick.a.x+stick.b.x)/2,my=(stick.a.y+stick.b.y)/2,a0=Math.atan2(stick.b.y-stick.a.y,stick.b.x-stick.a.x);let bs=null;
+      for(let da=-3;da<=3.01;da+=0.25)for(let q=-4*R;q<=4*R+0.01;q+=0.5){const a=a0+da*Math.PI/180,ux=Math.cos(a),uy=Math.sin(a),ox=mx-uy*q,oy=my+ux*q;let h=0;
+        for(let t=-L/2-12*R;t<=L/2+12*R;t+=1){const x=ox+ux*t,y=oy+uy*t;if(x<3||y<3||x>W-4||y>H-4)continue;if(rgAt(x,y,-uy,ux)>=RTH)h++;}
+        if(!bs||h>bs.h)bs={h,ux,uy,ox,oy};}
+      if(bs&&bs.h>=6*R){stick={a:{x:bs.ox-bs.ux*L/2,y:bs.oy-bs.uy*L/2},b:{x:bs.ox+bs.ux*L/2,y:bs.oy+bs.uy*L/2},len:L};}}
     // stick + game aim line form one straight line; the cue ball is the brightest white disc on it,
     // and the stick is the side with the dark/coloured mass → aim points the other way
     const sx=stick.b.x-stick.a.x,sy=stick.b.y-stick.a.y,sl=len(sx,sy),ux=sx/sl,uy=sy/sl;
@@ -241,7 +248,6 @@ function analyze(now){
     const T0=-12*R,T1=sl+12*R,NS=Math.ceil((T1-T0)/0.5)+1,pre=new Float32Array(NS+1);
     for(let i=0;i<NS;i++){const t=T0+i*0.5;let m=0;for(let q=-2;q<=2;q++){const xi=Math.round(stick.a.x+ux*t-uy*q),yi=Math.round(stick.a.y+uy*t+ux*q);if(xi<0||yi<0||xi>=W||yi>=H)continue;if(SX[yi*W+xi])m++;}pre[i+1]=pre[i]+m;}
     const massT=(t0,t1)=>{const i0=Math.max(0,Math.round((t0-T0)/0.5)),i1=Math.min(NS,Math.round((t1-T0)/0.5));return i1>i0?(pre[i1]-pre[i0])/((i1-i0)*5):0;};
-    ridge();
     const ridgeT=(t0,t1)=>{let h=0,n=0;const st=t1>t0?1:-1;for(let t=t0;st>0?t<=t1:t>=t1;t+=st){const x=stick.a.x+ux*t,y=stick.a.y+uy*t;if(x<3||y<3||x>W-4||y>H-4)break;n++;if(rgAt(x,y,-uy,ux)>=RTH)h++;}return n>=5?h/n:0;};
     // the cue ball: solid stick right behind it, the thin white aim line right ahead (nothing dark there), and a round white shape
     // "thick" = dark/coloured pixels at both sides ±3px of the line (the stick is wide; the aim line + its shadow is thin)
@@ -258,7 +264,9 @@ function analyze(now){
         for(let q=-0.5;q<=0.51;q+=0.25){const cx=px-uy*q*R,cy=py+ux*q*R;const sc=disc(cx,cy)/60+1.5*behind+1.5*line-2*aheadM;
           if(sc>bb){bb=sc;cb={x:cx,y:cy};sideA=sgn>0;}}}}
     let dir=sideA?{x:ux,y:uy}:{x:-ux,y:-uy};
-    if(cb){const mx=(stick.a.x+stick.b.x)/2,my=(stick.a.y+stick.b.y)/2;if((cb.x-mx)*dir.x+(cb.y-my)*dir.y<0)dir={x:-dir.x,y:-dir.y};}
+    // the stick is the side of the cue ball with the dark/coloured mass → aim points the other way
+    if(cb){const tc=(cb.x-stick.a.x)*ux+(cb.y-stick.a.y)*uy,mPos=thickT(tc+1.4*R,tc+18*R)+massT(tc+1.4*R,tc+18*R),mNeg=thickT(tc-18*R,tc-1.4*R)+massT(tc-18*R,tc-1.4*R);
+      if(Math.abs(mPos-mNeg)>0.3)dir=mNeg>mPos?{x:ux,y:uy}:{x:-ux,y:-uy};}
     // snap the cue ball onto the bright stretch along the line that has the dark stick right behind it
     if(cb){const tc=(cb.x-stick.a.x)*ux+(cb.y-stick.a.y)*uy,sg=sideA?1:-1;
       const prof=(t,useMin)=>{let v=useMin?255:0,n=0;for(let q=-1;q<=1;q++){const xi=Math.round(stick.a.x+ux*t-uy*q),yi=Math.round(stick.a.y+uy*t+ux*q);if(xi<0||yi<0||xi>=W||yi>=H)continue;const b=bri[yi*W+xi];if(useMin)v=Math.min(v,b);else v+=b;n++;}return n?(useMin?v:v/n)-fm:0;};
@@ -277,7 +285,7 @@ function analyze(now){
     let best=null;for(const w of wb){let sc=w.n;if(cue&&len(w.x-cue.x,w.y-cue.y)<2*R)sc*=2.5;if(!best||sc>best.sc){best={x:w.x,y:w.y,n:w.n,sc};}}
     cue=best?{x:best.x,y:best.y}:null;found=cue?interpret(hough(pts)):null;
   }
-  if(found){lastShotSeen=now;shot=smooth(shot,found);}else if(now-lastShotSeen>900)shot=null;
+  if(found){lastShotSeen=now;shot=smooth(shot,found);}else if(now-lastShotSeen>1500)shot=null;
 }
 // thin bright lines (the game's guide lines) light up here
 const RO=[2,2*W,2*W+2,2*W-2];
@@ -357,8 +365,16 @@ function findGhostHit(c,dir,sm,fm){
   // fine-tune with the game's short line from that ball (±8°)
   const b0=Math.atan2(u.y,u.x);let fb=null;
   for(let da=-40;da<=40.01;da+=0.5)for(let oq=-0.6;oq<=0.61;oq+=0.2){const a=b0+da*Math.PI/180,ux=Math.cos(a),uy=Math.sin(a),ox=O.x-uy*oq*R,oy=O.y+ux*oq*R;const h=rayRun(ox,oy,ux,uy,1.1*rB,300);if(!fb||h>fb.h)fb={h,ux,uy,ox,oy};}
-  if(fb&&fb.h>2.5*rB){const e=lastHit(fb.ox,fb.oy,fb.ux,fb.uy,1.1*rB,300),L=fitRidge(fb.ox,fb.oy,fb.ux,fb.uy,1.1*rB,e);const cand=L?{x:L.dx,y:L.dy}:{x:fb.ux,y:fb.uy};if(cand.x*u.x+cand.y*u.y>Math.cos(42*Math.PI/180))u=cand;}
-  return{G,O,u};}
+  let Of=O;
+  if(fb&&fb.h>2.5*rB){
+    // fit only the clean middle of the game's short line (skip the ball's own rim at the start), then refit once on the fitted axis
+    const e=lastHit(fb.ox,fb.oy,fb.ux,fb.uy,1.1*rB,300);let L=fitRidge(fb.ox,fb.oy,fb.ux,fb.uy,Math.min(2.2*rB,e-3*R),e);
+    if(L){const L2=fitRidge(L.mx,L.my,L.dx,L.dy,-len(L.mx-O.x,L.my-O.y)+2.2*rB,e-len(L.mx-fb.ox,L.my-fb.oy));if(L2)L=L2;}
+    const cand=L?{x:L.dx,y:L.dy}:{x:fb.ux,y:fb.uy};
+    if(cand.x*u.x+cand.y*u.y>Math.cos(42*Math.PI/180)){u=cand;if(L)Of=proj(O,L);}}
+  // slide the start onto the middle of the hit ball (along its path)
+  {let bt=0,bv=-1;for(let t=-0.6*R;t<=1.6*R;t+=0.25){const P={x:Of.x+u.x*t,y:Of.y+u.y*t},v=ballness(P,sm,fm);if(v>bv+0.02){bv=v;bt=t;}}if(bv>0.4)Of={x:Of.x+u.x*bt,y:Of.y+u.y*bt};}
+  return{G,O:Of,u};}
 // The ball being hit: the most solid coloured/dark disc where the game's aim line ends.
 // Its direction then follows from geometry (contact point on the aim line, 2 ball-radii from its centre),
 // and is only fine-tuned (±8°) with the game's own short line — so the cue ball's deflection line (90° off) can never be chosen.
@@ -458,7 +474,7 @@ function smooth(prev,cur){
     if(shown&&agree(shown,cur.obj)){shown={start:mix(shown.start,cur.obj.start,.25),dir:norm(mix(shown.dir,cur.obj.dir,.2))};objT=now;cand=null;cn=0;}
     else{if(cand&&agree(cand,cur.obj)){cn++;cand={start:mix(cand.start,cur.obj.start,.5),dir:norm(mix(cand.dir,cur.obj.dir,.5))};}else{cand=cur.obj;cn=1;}
       if(cn>=3){shown=cand;objT=now;cand=null;cn=0;}}}
-  if(shown&&now-objT>900)shown=null;
+  if(shown&&now-objT>1500)shown=null;
   o.obj=shown;o.cand=cand;o.cn=cn;o.objT=objT;return o;}
 
 // ---------- 3. extend with cushion bounces ----------
