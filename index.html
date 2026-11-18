@@ -195,7 +195,7 @@ function analyze(now){
   // white things that stand out from the felt around them (ignores broad screen glare)
   const samp=(rx,ry)=>{const w=h[6]*rx+h[7]*ry+h[8],fx=Math.round(((h[0]*rx+h[1]*ry+h[2])/w-bx)*sc),fy=Math.round(((h[3]*rx+h[4]*ry+h[5])/w-by)*sc);if(fx<0||fy<0||fx>=pw||fy>=ph)return -1;const i=(fy*pw+fx)*4;return Math.max(d[i],d[i+1],d[i+2]);};
   const sampM=(rx,ry)=>{const w=h[6]*rx+h[7]*ry+h[8],fx=Math.round(((h[0]*rx+h[1]*ry+h[2])/w-bx)*sc),fy=Math.round(((h[3]*rx+h[4]*ry+h[5])/w-by)*sc);if(fx<0||fy<0||fx>=pw||fy>=ph)return -1;const i=(fy*pw+fx)*4;return (d[i]+d[i+1]+d[i+2])/3;};
-  if((anaN++)%5===0)measurePockets(sampM);
+  if((anaN++)%10===0)measurePockets(sampM);
   const hist=new Uint32Array(256);for(let k=0;k<N;k+=3)hist[bri[k]]++;let fm=0;var acc=0;for(;fm<256;fm++){acc+=hist[fm];if(acc>=N/6)break;}
   const clip=fm*0.85; // dark pockets/balls don't drag the local average down
   for(let y=0;y<H;y++){let row=0;for(let x=0;x<W;x++){row+=Math.max(bri[y*W+x],clip);integ[(y+1)*(W+1)+x+1]=integ[y*(W+1)+x+1]+row;}}
@@ -353,9 +353,9 @@ function findGhostHit(c,dir,sm,fm){
   // every ring along the aim line is a candidate; the real ghost is the one with a solid ball touching it
   const a0=Math.atan2(dir.y,dir.x),cands=[];
   // the ghost ring is exactly one ball in size → also measures the ball size on screen
-  const radii=[0.9,1,1.1].map(k=>k*R); // 8 Ball Pool: ball size is a fixed fraction of the (straightened) table
-  for(let al=2.5*R;al<600;al+=1){const x=c.x+dir.x*al,y=c.y+dir.y*al;if(x<4||y<4||x>W-4||y>H-4)break;
-    let bq=null;for(let q=-0.5*R;q<=0.51*R;q+=0.25*R)for(const rad of radii){const cx=x-dir.y*q,cy=y+dir.x*q,v=ringScore(cx,cy,rad);if(!bq||v>bq.v)bq={v,x:cx,y:cy,al,rad};}
+  const radii=[R]; // 8 Ball Pool: ball size is a fixed fraction of the (straightened) table
+  for(let al=2.5*R;al<600;al+=1.25){const x=c.x+dir.x*al,y=c.y+dir.y*al;if(x<4||y<4||x>W-4||y>H-4)break;
+    let bq=null;for(let q=-0.4*R;q<=0.41*R;q+=0.2*R)for(const rad of radii){const cx=x-dir.y*q,cy=y+dir.x*q,v=ringScore(cx,cy,rad);if(!bq||v>bq.v)bq={v,x:cx,y:cy,al,rad};}
     if(bq.v>0.5){const last=cands[cands.length-1];if(last&&bq.al-last.al<1.5*R){if(bq.v>last.v)cands[cands.length-1]=bq;}else cands.push(bq);}}
   let best=null;const R0=R;
   for(const g of cands){R=g.rad;const G={x:g.x,y:g.y},ob=ballAround(G,a0,sm,fm);R=R0;if(!ob||ob.bn<0.5)continue;const sc=g.v+ob.bn;if(!best||sc>best.sc)best={sc,G,ob,rad:g.rad};}
