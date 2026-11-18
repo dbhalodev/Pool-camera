@@ -65,11 +65,11 @@ const $=id=>document.getElementById(id);
 const view=$('view'),ctx=view.getContext('2d'),vid=$('vid'),statusEl=$('status');
 const det=document.createElement('canvas'),detx=det.getContext('2d',{willReadFrequently:true});
 const proc=document.createElement('canvas'),procx=proc.getContext('2d',{willReadFrequently:true});
-const SX=new Uint8Array(N),bri=new Uint8Array(N),sat=new Uint8Array(N),M=new Uint8Array(N),E=new Uint8Array(N),T=new Uint8Array(N),lab=new Int32Array(N),stk=new Int32Array(N),integ=new Float64Array((W+1)*(H+1));
+const RG=new Uint8Array(N),SX=new Uint8Array(N),bri=new Uint8Array(N),sat=new Uint8Array(N),M=new Uint8Array(N),E=new Uint8Array(N),T=new Uint8Array(N),lab=new Int32Array(N),stk=new Int32Array(N),integ=new Float64Array((W+1)*(H+1));
 
 let src=null,srcW=0,srcH=0,stream=null;
 let corners=null,cand=null,candHits=0,lastTableSeen=0,Hr2v=null;
-let R=5,cue=null,shot=null,lastShotSeen=0,lastDet=0,lastAna=0;
+let R=5.4,cue=null,shot=null,lastShotSeen=0,lastDet=0,lastAna=0;
 
 const len=(x,y)=>Math.hypot(x,y),norm=v=>{const l=len(v.x,v.y)||1;return{x:v.x/l,y:v.y/l}};
 let stTxt='';function setStatus(h,ok){if(h!==stTxt){stTxt=h;statusEl.innerHTML=h;}statusEl.classList.toggle('ok',!!ok);}
@@ -174,7 +174,7 @@ function runDetect(now){
   if(c){lastTableSeen=now;const tol=0.035*len(c[0][0]-c[2][0],c[0][1]-c[2][1]);
     if(corners&&maxMove(c,corners)<tol){corners=corners.map((p,i)=>[p[0]*0.75+c[i][0]*0.25,p[1]*0.75+c[i][1]*0.25]);candHits=0;cand=null;}
     else{if(cand&&maxMove(c,cand)<tol){candHits++;cand=cand.map((p,i)=>[(p[0]+c[i][0])/2,(p[1]+c[i][1])/2]);}else{cand=c;candHits=1;}
-      if(candHits>=(corners?3:2)){corners=cand;cand=null;candHits=0;shot=null;}}
+      if(candHits>=(corners?3:2)){corners=cand;cand=null;candHits=0;}}
     if(corners)Hr2v=homog(RC,corners);
   }else if(corners&&now-lastTableSeen>1500){corners=null;Hr2v=null;shot=null;}
 }
@@ -221,13 +221,13 @@ function analyze(now){
   // the cue stick: long dark/coloured straight line (very visible, and it points exactly along the shot)
   const sh=new Uint32Array(256);for(let k=0;k<N;k+=3)sh[sat[k]]++;let sm=0;acc=0;for(;sm<256;sm++){acc+=sh[sm];if(acc>=N/6)break;}
   const spts=[];SX.fill(0);
-  for(let y=3;y<H-3;y++)for(let x=3;x<W-3;x++){const k=y*W+x;
+  for(let y=3;y<H-3;y++)for(let x=3;x<W-3;x++){const k=y*W+x;const edge=x<9||y<9||x>=W-9||y>=H-9;
     let nearP=false;for(const q of POCKETS)if(Math.abs(x-q[0])<pz&&Math.abs(y-q[1])<pz){nearP=true;break;}if(nearP)continue;
     const xa=Math.max(0,x-rr),xb=Math.min(W,x+rr+1),ya=Math.max(0,y-rr),yb=Math.min(H,y+rr+1);
     const mean=(integ[yb*(W+1)+xb]-integ[ya*(W+1)+xb]-integ[yb*(W+1)+xa]+integ[ya*(W+1)+xa])/((xb-xa)*(yb-ya));
-    if(mean-bri[k]>28||sat[k]>sm+50){spts.push(x+.5,y+.5);SX[k]=1;}}
+    if(mean-bri[k]>28||sat[k]>sm+50){if(!edge)spts.push(x+.5,y+.5);SX[k]=1;}}
   let SP=spts;if(SP.length>8000){const Q=[];const st=Math.ceil(SP.length/2/4000);for(let i=0;i<SP.length;i+=2*st)Q.push(SP[i],SP[i+1]);SP=Q;}
-  const ssegs=hough(SP,3,3);let stick=null;
+  const ssegs=hough(SP,3,4);let stick=null;
   for(const g of ssegs){if(g.len<Math.max(40,5*R))continue;
     const bd=p=>Math.min(p.x,p.y,W-p.x,H-p.y);
     // skip rail strips along the table edge
@@ -240,21 +240,74 @@ function analyze(now){
     const dir=norm({x:tip.x-butt.x,y:tip.y-butt.y});
     // cue ball = first white blob just ahead of the stick tip
     let cb=null,ba=1e9;for(const w of wb){const vx=w.x-tip.x,vy=w.y-tip.y,al=vx*dir.x+vy*dir.y,pp=Math.abs(-vx*dir.y+vy*dir.x);if(al>-R&&al<10*R&&pp<1.8*R&&al<ba){ba=al;cb=w;}}
-    if(cb){const rEst=(Math.sqrt(cb.n/Math.PI)+2)*1.08;R=Math.max(3,Math.min(16,R*0.85+rEst*0.15));}
+    if(cb){const rEst=(Math.sqrt(cb.n/Math.PI)+2)*1.08;if(rEst>3.5&&rEst<11)R=R*0.85+rEst*0.15;}
     const c0=cb?{x:cb.x,y:cb.y}:{x:tip.x+dir.x*1.3*R,y:tip.y+dir.y*1.3*R};
-    cue=c0;let fdir=dir;
-    // lock onto the game's thin aim line if visible (more precise than the thick stick)
-    const wsegs=hough(pts);let bestL=0;
-    for(const g of wsegs)for(const [n0,f0] of [[g.a,g.b],[g.b,g.a]]){const vd=norm({x:f0.x-n0.x,y:f0.y-n0.y});
-      if(vd.x*dir.x+vd.y*dir.y>0.985&&perpDist(c0,n0,f0)<1.5*R&&len(n0.x-c0.x,n0.y-c0.y)<5*R&&g.len>bestL){bestL=g.len;fdir=vd;}}
-    found={cue:c0,dir:fdir,ghost:null,obj:null,after:null,balls:findBalls(c0,sm,fm),wsegs};
-    }else{
+    // precise aim: sweep for the game's thin aim line starting at the cue ball
+    ridge();
+    const rf=refineAim(c0,dir);
+    const cueP=rf?rf.cue:c0,fdir=rf?rf.dir:dir;cue=cueP;
+    const balls=findBalls(cueP,sm,fm);
+    found={cue:cueP,dir:fdir,ghost:null,obj:null,after:null,balls,precise:!!rf};
+    if(rf){const ob=findObject(cueP,fdir,rf.end,balls,sm,fm);if(ob){found.ghost=ob.G;found.obj={start:ob.O,dir:ob.u};found.fm=fm;}}
+  }else{
     // no stick visible: fall back to the white guide line from the cue ball
     let best=null;for(const w of wb){let sc=w.n;if(cue&&len(w.x-cue.x,w.y-cue.y)<2*R)sc*=2.5;if(!best||sc>best.sc){best={x:w.x,y:w.y,n:w.n,sc};}}
     cue=best?{x:best.x,y:best.y}:null;found=cue?interpret(hough(pts)):null;
   }
   if(found){lastShotSeen=now;shot=smooth(shot,found);}else if(now-lastShotSeen>500)shot=null;
 }
+// thin bright lines (the game's guide lines) light up here
+const RO=[2,2*W,2*W+2,2*W-2];
+function ridge(){RG.fill(0);for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){const k=y*W+x,v=bri[k];let b=0;
+  for(let i=0;i<4;i++){const o=RO[i],a=v-bri[k+o],c=v-bri[k-o],m=a<c?a:c;if(m>b)b=m;}RG[k]=b>255?255:b;}}
+const RTH=7;
+function rgAt(x,y,px,py){let m=0;for(let s=-0.7;s<=0.71;s+=0.7){const xx=Math.round(x+px*s),yy=Math.round(y+py*s);if(xx<0||yy<0||xx>=W||yy>=H)continue;const v=RG[yy*W+xx];if(v>m)m=v;}return m;}
+function rayFrac(ox,oy,ux,uy,t0,t1){let n=0,h=0;for(let t=t0;t<=t1;t+=1){const x=ox+ux*t,y=oy+uy*t;if(x<3||y<3||x>W-4||y>H-4)break;n++;if(rgAt(x,y,-uy,ux)>=RTH)h++;}return n>=10?h/n:0;}
+function rayRun(ox,oy,ux,uy,t0,t1){let h=0,gap=0;for(let t=t0;t<=t1;t+=1){const x=ox+ux*t,y=oy+uy*t;if(x<3||y<3||x>W-4||y>H-4)break;const xi=Math.round(x),yi=Math.round(y),v=RG[yi*W+xi];if(rgAt(x,y,-uy,ux)>=RTH){h+=1+Math.min(v,40)/40;gap=0;}else if(++gap>5)break;}return h;}
+// least-squares fit of the game's line pixels near a ray → sub-degree direction
+function lastHit(ox,oy,ux,uy,t0,t1){let last=t0,gap=0;for(let t=t0;t<=t1;t+=1){const x=ox+ux*t,y=oy+uy*t;if(x<3||y<3||x>W-4||y>H-4)break;if(rgAt(x,y,-uy,ux)>=RTH){last=t;gap=0;}else if(++gap>5)break;}return last;}
+function fitRidge(ox,oy,ux,uy,t0,t1){let sw=0,mx=0,my=0;const P=[],seen=new Set();
+  for(let t=t0;t<=t1;t+=0.5)for(let q=-1.5;q<=1.51;q+=0.5){const xi=Math.round(ox+ux*t-uy*q),yi=Math.round(oy+uy*t+ux*q);if(xi<0||yi<0||xi>=W||yi>=H)continue;const k=yi*W+xi;if(seen.has(k))continue;seen.add(k);const v=RG[k];if(v<RTH)continue;P.push([xi+.5,yi+.5,v]);sw+=v;mx+=(xi+.5)*v;my+=(yi+.5)*v;}
+  if(P.length<6)return null;mx/=sw;my/=sw;let xx=0,yy=0,xy=0;for(const p of P){const a=p[0]-mx,b=p[1]-my;xx+=a*a*p[2];yy+=b*b*p[2];xy+=a*b*p[2];}
+  const ang=0.5*Math.atan2(2*xy,xx-yy);let dx=Math.cos(ang),dy=Math.sin(ang);if(dx*ux+dy*uy<0){dx=-dx;dy=-dy;}
+  if(Math.abs(dx*ux+dy*uy)<0.995)return null;return{mx,my,dx,dy};}
+const proj=(p,L)=>{const t=(p.x-L.mx)*L.dx+(p.y-L.my)*L.dy;return{x:L.mx+L.dx*t,y:L.my+L.dy*t};};
+function refineAim(c,dir){const a0=Math.atan2(dir.y,dir.x);let best=null;
+  const test=(a,off)=>{const ux=Math.cos(a),uy=Math.sin(a),ox=c.x-uy*off*R,oy=c.y+ux*off*R,f=rayFrac(ox,oy,ux,uy,1.4*R,1.4*R+60),sc=f-Math.abs(off)*0.02;
+    if(!best||sc>best.sc)best={sc,f,ux,uy,ox,oy,a,off};};
+  for(let da=-10;da<=10;da+=0.5)for(let off=-1.2;off<=1.21;off+=0.3)test(a0+da*Math.PI/180,off);
+  if(!best||best.f<0.4)return null;const ba=best.a,bo=best.off;
+  if(best.f<0.5)return null;
+  let fb=null;for(let da=-0.8;da<=0.81;da+=0.1)for(let off=bo-0.4;off<=bo+0.41;off+=0.1){const a=ba+da*Math.PI/180,ux=Math.cos(a),uy=Math.sin(a),ox=c.x-uy*off*R,oy=c.y+ux*off*R,h=rayRun(ox,oy,ux,uy,1.4*R,400)-Math.abs(off-bo)*2;
+    if(!fb||h>fb.h)fb={h,ux,uy,ox,oy};}
+  best={...best,...fb};
+  {const end=lastHit(best.ox,best.oy,best.ux,best.uy,1.4*R,500),L=fitRidge(best.ox,best.oy,best.ux,best.uy,1.4*R,end);
+    if(L){const cp=proj(c,L);best.ox=cp.x;best.oy=cp.y;best.ux=L.dx;best.uy=L.dy;}}
+  // follow the line to where it stops (the contact point / cushion)
+  let last=1.4*R,gap=0;for(let t=1.4*R;t<700;t+=1){const x=best.ox+best.ux*t,y=best.oy+best.uy*t;if(x<3||y<3||x>W-4||y>H-4)break;
+    if(rgAt(x,y,-best.uy,best.ux)>=RTH){last=t;gap=0;}else if(++gap>7)break;}
+  return{cue:{x:best.ox,y:best.oy},dir:{x:best.ux,y:best.uy},end:{x:best.ox+best.ux*last,y:best.oy+best.uy*last}};}
+function ballness(O,sm,fm){let n=0,h=0;const r=0.8*R;for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){if(dx*dx+dy*dy>r*r)continue;const x=Math.round(O.x+dx),y=Math.round(O.y+dy);if(x<0||y<0||x>=W||y>=H)continue;n++;const k=y*W+x;if(Math.abs(bri[k]-fm)>25||sat[k]>sm+35)h++;}return n?h/n:0;}
+// the hit ball's short line: its centre sits 2 ball-widths beyond the contact point, the line runs away from it
+function findObject(c,dir,end,balls,sm,fm){
+  const a0=Math.atan2(dir.y,dir.x);let best=null;
+  const test=(G,a,Ofix)=>{const ux=Math.cos(a),uy=Math.sin(a),O=Ofix||{x:G.x+ux*2*R,y:G.y+uy*2*R};const f=rayFrac(O.x,O.y,ux,uy,1.2*R,5.5*R);if(f<0.3)return;
+    const bn=ballness(O,sm,fm);if(bn<0.25&&!Ofix)return; // the line must start from a ball, not bare felt
+    const sc=f+0.6*bn+(Ofix?0.3:0);if(!best||sc>best.sc)best={sc,f,G,O,a,u:{x:ux,y:uy},Ofix};};
+  // a detected ball on the aim line → contact point from geometry
+  let hb=null,tb=1e9;for(const o of balls){const fx=c.x-o.x,fy=c.y-o.y,bq=fx*dir.x+fy*dir.y,cc=fx*fx+fy*fy-4*R*R,disc=bq*bq-cc;if(disc<0)continue;const t=-bq-Math.sqrt(disc);if(t>R&&t<tb){tb=t;hb=o;}}
+  if(hb){const G={x:c.x+dir.x*tb,y:c.y+dir.y*tb},n0=Math.atan2(hb.y-G.y,hb.x-G.x);for(let da=-60;da<=60;da+=1)test(G,n0+da*Math.PI/180,{x:hb.x,y:hb.y});}
+  // otherwise search around where the game's aim line ends
+  for(let t=-1;t<=6.01;t+=0.5){const G={x:end.x+dir.x*t*R,y:end.y+dir.y*t*R};for(let da=-85;da<=85;da+=1)test(G,a0+da*Math.PI/180,null);}
+  if(!best||best.f<0.45)return null;
+  // fine-tune the angle
+  const b0=best;let fb=null;
+  for(let da=-2;da<=2.01;da+=0.2)for(let oy=-0.7;oy<=0.71;oy+=0.175)for(let ox=-0.7;ox<=0.71;ox+=0.175){const a=b0.a+da*Math.PI/180,ux=Math.cos(a),uy=Math.sin(a),O={x:b0.O.x+ox*R,y:b0.O.y+oy*R};
+    const h=rayRun(O.x,O.y,ux,uy,1.1*R,300)-len(ox,oy)*1.5;if(!fb||h>fb.h)fb={h,O,u:{x:ux,y:uy}};}
+  if(fb&&fb.h>2*R){
+    const end=lastHit(fb.O.x,fb.O.y,fb.u.x,fb.u.y,1.1*R,300),L=fitRidge(fb.O.x,fb.O.y,fb.u.x,fb.u.y,1.1*R,end);
+    if(L){const ref=best.Ofix||b0.O;best={...best,O:proj(ref,L),u:{x:L.dx,y:L.dy}};}else best={...best,O:fb.O,u:fb.u};}
+  const G={x:best.O.x-best.u.x*2*R,y:best.O.y-best.u.y*2*R};return{G,O:best.O,u:best.u};}
 // object balls: solid round blobs that are clearly coloured, dark or white
 function findBalls(c0,sm,fm){
   for(let k=0;k<N;k++)T[k]=SX[k]|M[k];morph(T,E,false);morph(E,T,true);morph(T,E,true);
@@ -319,10 +372,13 @@ function fallback(segs){
     if(sc>bs){bs=sc;best={cue:{x:cue.x,y:cue.y},dir:norm(cd),ghost:G,obj:{start:n,dir:od},after:def};}}
   return bs>0.6?best:null;}
 function smooth(prev,cur){
-  if(!prev)return cur;const mix=(a,b,t)=>({x:a.x*(1-t)+b.x*t,y:a.y*(1-t)+b.y*t});
-  if(prev.dir.x*cur.dir.x+prev.dir.y*cur.dir.y<0.97||len(prev.cue.x-cur.cue.x,prev.cue.y-cur.cue.y)>R)return cur;
+  if(!prev){if(cur.obj)cur.objT=performance.now();return cur;}const mix=(a,b,t)=>({x:a.x*(1-t)+b.x*t,y:a.y*(1-t)+b.y*t});
+  if(prev.dir.x*cur.dir.x+prev.dir.y*cur.dir.y<0.97||len(prev.cue.x-cur.cue.x,prev.cue.y-cur.cue.y)>R){if(cur.obj)cur.objT=performance.now();return cur;}
   const o={cue:mix(prev.cue,cur.cue,.5),dir:norm(mix(prev.dir,cur.dir,.45)),ghost:cur.ghost&&prev.ghost?mix(prev.ghost,cur.ghost,.5):cur.ghost,obj:cur.obj,after:cur.after,balls:cur.balls,wsegs:cur.wsegs};
+  const now=performance.now();
   if(cur.obj&&prev.obj&&prev.obj.dir.x*cur.obj.dir.x+prev.obj.dir.y*cur.obj.dir.y>0.95)o.obj={start:mix(prev.obj.start,cur.obj.start,.5),dir:norm(mix(prev.obj.dir,cur.obj.dir,.45))};
+  if(cur.obj)o.objT=now;
+  else if(prev.obj&&now-(prev.objT||0)<600){o.obj=prev.obj;o.ghost=prev.ghost;o.objT=prev.objT;} // hold through brief dropouts
   return o;}
 
 // ---------- 3. extend with cushion bounces ----------
@@ -361,11 +417,12 @@ function draw(){
     for(const o of (s.balls||[])){const fx=p0.x-o.x,fy=p0.y-o.y,bq=fx*ux+fy*uy,c=fx*fx+fy*fy-4*R*R,disc=bq*bq-c;if(disc<0)continue;const t=-bq-Math.sqrt(disc);
       if(t>0.5&&t<=L&&t<tb){tb=t;hb={ball:o,ghost:{x:p0.x+ux*t,y:p0.y+uy*t},dir:{x:ux,y:uy},seg:i};}}
     if(hb)break outer;}
+  if(s.obj){hb={ghost:s.ghost,ball:s.obj.start,dir:s.dir,seg:1,fixed:s.obj.dir};}
   if(hb){
-    const path=cueTr.pts.slice(0,hb.seg).concat([hb.ghost]);poly(path,'#fff',2.6*d);circ(hb.ghost,R,'#fff',1.6*d);
-    let n=norm({x:hb.ball.x-hb.ghost.x,y:hb.ball.y-hb.ghost.y});
+    const path=hb.fixed?[s.cue,hb.ghost]:cueTr.pts.slice(0,hb.seg).concat([hb.ghost]);poly(path,'#fff',2.6*d);circ(hb.ghost,R,'#fff',1.6*d);
+    let n=hb.fixed?hb.fixed:norm({x:hb.ball.x-hb.ghost.x,y:hb.ball.y-hb.ghost.y});
     // prefer the game's own short line on that ball when the camera can see it
-    let bl=0;for(const g of (s.wsegs||[]))for(const [n0,f0] of [[g.a,g.b],[g.b,g.a]]){if(len(n0.x-hb.ball.x,n0.y-hb.ball.y)>2.2*R||g.len<1.2*R)continue;const vd=norm({x:f0.x-n0.x,y:f0.y-n0.y});if(vd.x*n.x+vd.y*n.y>0.9&&g.len>bl){bl=g.len;n=vd;}}
+    let bl=0;if(!hb.fixed)for(const g of (s.wsegs||[]))for(const [n0,f0] of [[g.a,g.b],[g.b,g.a]]){if(len(n0.x-hb.ball.x,n0.y-hb.ball.y)>2.2*R||g.len<1.2*R)continue;const vd=norm({x:f0.x-n0.x,y:f0.y-n0.y});if(vd.x*n.x+vd.y*n.y>0.9&&g.len>bl){bl=g.len;n=vd;}}
     const o=trace(hb.ball,n,5,W*5);result.obj=o;
     poly(o.pts,o.pocket!=null?'#3ddc84':'#ffd23f',3.2*d);if(o.pocket!=null)label(o.pts[o.pts.length-1],'POT ✓','#3ddc84');
     const dt=hb.dir.x*n.x+hb.dir.y*n.y,tx=hb.dir.x-n.x*dt,ty=hb.dir.y-n.y*dt;
